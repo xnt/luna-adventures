@@ -22,10 +22,37 @@
         align-items: center;
         background: linear-gradient(180deg, #ffeef9 0%, #f7f2ff 50%, #e9f8ff 100%);
       }
+      #attribution {
+        position: fixed;
+        bottom: 0;
+        left: 0;
+        width: 100%;
+        text-align: center;
+        font-family: monospace;
+        font-size: 12px;
+        color: #ccc;
+        text-shadow: 0 0 4px #000, 0 0 8px #000;
+        background: linear-gradient(transparent, rgba(0, 0, 0, 0.45));
+        padding: 10px 0 6px;
+        pointer-events: auto;
+        z-index: 1000;
+      }
+      #attribution a {
+        color: #aac;
+        text-decoration: none;
+      }
+      #attribution a:hover {
+        color: #fff;
+        text-decoration: underline;
+      }
     </style>
   </head>
   <body>
     <div id="app"></div>
+    <footer id="attribution">
+      Made with ❤️ by <a href="https://twitter.com/xnt" target="_blank" rel="noopener">Vicente Plata</a>.
+      <a href="https://github.com/xnt/luna-adventures/" target="_blank" rel="noopener">Read the source or contribute</a>.
+    </footer>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
