@@ -1,13 +1,24 @@
 import Phaser from "phaser";
 import { GAME_CONFIG } from "../logic/constants";
-import { LevelGenerator } from "../logic/levelGenerator";
-import type { FoeSpawn, ItemSpawn, PlatformSegment } from "../logic/types";
-import { applyImmunity, createHealth, damage, heal, isGameOver, type HealthState } from "../logic/health";
-import { getRandomTheme, type Theme } from "../themes";
+import {
+  buildLevelGeometry,
+  generateLevelPlan,
+  spawnLevelEntities,
+  type LevelPlan,
+} from "../logic/levelPlan";
+import type { FoeSpawn, ItemSpawn } from "../logic/types";
+import {
+  RunController,
+  type SceneUiRefs as RunSceneUiRefs,
+} from "../logic/runController";
+import {
+  applyTheme,
+  resolveTheme,
+  themeRegistry,
+  type Theme,
+} from "../themes/themeService";
 
-interface SceneUiRefs {
-  hpElement: HTMLDivElement;
-  statusElement: HTMLDivElement;
+interface SceneUiRefs extends RunSceneUiRefs {
   controlButtons: HTMLDivElement[];
 }
 
@@ -16,8 +27,8 @@ export class LunaScene extends Phaser.Scene {
   private groundGroup!: Phaser.Physics.Arcade.StaticGroup;
   private foeGroup!: Phaser.Physics.Arcade.Group;
   private itemGroup!: Phaser.Physics.Arcade.Group;
-  private levelGen!: LevelGenerator;
-  private healthState: HealthState = createHealth();
+  private plan!: LevelPlan;
+  private runController!: RunController;
   private cursors!: Phaser.Types.Input.Keyboard.CursorKeys;
   private wasdKeys!: {
     left: Phaser.Input.Keyboard.Key;
@@ -28,18 +39,15 @@ export class LunaScene extends Phaser.Scene {
     dash: Phaser.Input.Keyboard.Key;
   };
   private wasJumpPressed = false;
-  private statusText = "";
   private statusTimer?: Phaser.Time.TimerEvent;
   private controlsState = { left: false, right: false, jump: false, dash: false };
-  private isGameEnded = false;
-  private chunksGenerated = 0;
-  private ownerSprite!: Phaser.GameObjects.Sprite;
   private progressBar!: Phaser.GameObjects.Graphics;
-  private hasWon = false;
   private currentTheme!: Theme;
 
   constructor(private ui: SceneUiRefs) {
     super("luna");
+    // Controller owns run-state; scene passes UI refs it needs
+    this.runController = new RunController({ ui: this.ui });
   }
 
   preload() {
@@ -47,14 +55,15 @@ export class LunaScene extends Phaser.Scene {
   }
 
   create() {
-    // Select random theme
-    this.currentTheme = getRandomTheme();
+    // Resolve and apply theme using the theme service
+    this.currentTheme = resolveTheme(themeRegistry, Date.now() % 10000);
 
     this.physics.world.setBounds(0, 0, Number.MAX_SAFE_INTEGER, GAME_CONFIG.height + 200);
     this.cameras.main.setBounds(0, 0, Number.MAX_SAFE_INTEGER, GAME_CONFIG.height);
 
-    // Generate theme background
-    this.currentTheme.generateBackground(this);
+    // Apply theme (generates all textures: background, ground, entities)
+    applyTheme(this, this.currentTheme);
+
     // Use tileSprite for repeating background throughout the level
     const bg = this.add.tileSprite(0, 0, GAME_CONFIG.levelLength + GAME_CONFIG.width, GAME_CONFIG.height, "theme-background").setOrigin(0);
     bg.setScrollFactor(0.3, 0.3);
@@ -63,19 +72,11 @@ export class LunaScene extends Phaser.Scene {
     this.groundGroup = this.physics.add.staticGroup();
     this.foeGroup = this.physics.add.group();
     this.itemGroup = this.physics.add.group();
-    this.levelGen = new LevelGenerator({ seed: Date.now() % 10000 });
-
-    // Generate theme-specific sprites
-    this.currentTheme.generateGround(this);
-    this.currentTheme.generateCat(this);
-    this.currentTheme.generateRoomba(this);
-    this.currentTheme.generateFood(this);
-    this.currentTheme.generateDrumstick(this);
 
     // Generate Luna (always the same cute pug)
     this.createLunaSprite();
 
-    // Generate owner and heart
+    // Generate owner and heart textures (sprites created from plan below)
     this.createOwnerSprite();
     this.createHeartSprite();
 
@@ -83,7 +84,15 @@ export class LunaScene extends Phaser.Scene {
     this.progressBar.setScrollFactor(0);
     this.progressBar.setDepth(10);
 
-    this.spawnInitialGround();
+    // Generate level plan (pure data) then build Phaser geometry/entities
+    this.plan = generateLevelPlan({ seed: Date.now() % 10000 });
+    buildLevelGeometry(this, this.plan, this.groundGroup);
+    spawnLevelEntities(this, this.plan, this.foeGroup, this.itemGroup);
+
+    // Owner and heart sprites from plan positions
+    this.add.sprite(this.plan.ownerX, this.plan.ownerY, "owner").setDepth(3);
+    const heartSprite = this.add.sprite(this.plan.ownerX + 50, this.plan.ownerY - 12, "heart").setDepth(3);
+    heartSprite.setAlpha(0.9);
 
     this.luna = this.physics.add.sprite(120, GAME_CONFIG.groundY - 80, "luna");
     this.luna.setCollideWorldBounds(false);
@@ -109,9 +118,10 @@ export class LunaScene extends Phaser.Scene {
     });
 
     // Show theme name
-    this.setStatus(`Theme: ${this.currentTheme.name}`);
-
-    this.updateHud();
+    this.runController.setStatus(`Theme: ${this.currentTheme.name}`);
+    this.statusTimer = this.time.delayedCall(2000, () => {
+      this.runController.clearStatus();
+    });
   }
 
   private createLunaSprite() {
@@ -182,18 +192,18 @@ export class LunaScene extends Phaser.Scene {
   }
 
   update(time: number) {
-    if (this.isGameEnded) {
+    if (!this.runController.canMove()) {
       return;
     }
 
-    this.ensureChunks();
     this.updateMovement();
     this.updateEnemies();
     this.handlePitCheck();
     this.updateProgressBar();
     this.checkWinCondition();
 
-    if (this.healthState.immuneUntil > time) {
+    const health = this.runController.getHealth();
+    if (health.immuneUntil > time) {
       this.luna.setTint(0xfff4b1);
     } else {
       this.luna.clearTint();
@@ -234,83 +244,6 @@ export class LunaScene extends Phaser.Scene {
     });
   }
 
-  private spawnInitialGround() {
-    while (this.chunksGenerated < GAME_CONFIG.levelChunks) {
-      this.spawnChunk();
-    }
-    const ownerX = GAME_CONFIG.levelLength - 80;
-    this.ownerSprite = this.add.sprite(ownerX, GAME_CONFIG.groundY - 48, "owner").setDepth(3);
-    const heartSprite = this.add.sprite(ownerX + 50, GAME_CONFIG.groundY - 60, "heart").setDepth(3);
-    heartSprite.setAlpha(0.9);
-
-    // Ensure there's always ground under Luna's spawn point
-    const spawnPlatform = this.groundGroup.create(0, GAME_CONFIG.groundY, "ground");
-    spawnPlatform.setOrigin(0, 1);
-    spawnPlatform.displayWidth = GAME_CONFIG.tileSize * 12;
-    spawnPlatform.displayHeight = GAME_CONFIG.tileSize;
-    spawnPlatform.refreshBody();
-  }
-
-  private ensureChunks() {
-    // Level is fully generated upfront, no need to add more chunks
-  }
-
-  private spawnChunk() {
-    if (this.chunksGenerated >= GAME_CONFIG.levelChunks) {
-      return;
-    }
-    const chunk = this.levelGen.nextChunk();
-    // Important: spawn platforms first so collisions are active before enemies/items
-    this.spawnPlatforms(chunk.platforms);
-    // Delay enemies to next frame to ensure static bodies are ready
-    this.time.delayedCall(0, () => {
-      this.spawnFoes(chunk.foes);
-      this.spawnItems(chunk.items);
-    });
-    this.chunksGenerated += 1;
-  }
-
-  private spawnPlatforms(segments: PlatformSegment[]) {
-    segments.forEach((segment) => {
-      if (segment.kind === "pit") {
-        return;
-      }
-      const platform = this.groundGroup.create(segment.x, segment.height, "ground");
-      platform.setOrigin(0, 1);
-      platform.displayWidth = segment.width;
-      platform.displayHeight = GAME_CONFIG.tileSize;
-      platform.refreshBody();
-      platform.setTint(segment.kind === "stairs" ? 0xb7e4ff : 0xffc7e8);
-    });
-  }
-
-  private spawnFoes(spawns: FoeSpawn[]) {
-    spawns.forEach((spawn) => {
-      const foe = this.foeGroup.create(spawn.x, spawn.y, spawn.kind);
-      foe.setBounce(0);
-      foe.setCollideWorldBounds(false);
-      foe.setVelocityX(spawn.kind === "cat" ? -GAME_CONFIG.catSpeed : -GAME_CONFIG.roombaSpeed);
-      foe.setData("kind", spawn.kind);
-      foe.setData("direction", -1);
-      foe.setData("platformStartX", spawn.platformStartX);
-      foe.setData("platformEndX", spawn.platformEndX);
-      if (spawn.kind === "roomba") {
-        foe.setSize(26, 18);
-        foe.setOffset(1, 6);
-      }
-      foe.setDepth(1);
-      foe.setGravityY(400);
-    });
-  }
-
-  private spawnItems(spawns: ItemSpawn[]) {
-    spawns.forEach((spawn) => {
-      const item = this.itemGroup.create(spawn.x, spawn.y, spawn.kind);
-      item.setData("kind", spawn.kind);
-      item.setBounce(0.1);
-    });
-  }
-
   private updateMovement() {
     const left = this.controlsState.left || this.cursors.left?.isDown || this.wasdKeys.left?.isDown;
     const right = this.controlsState.right || this.cursors.right?.isDown || this.wasdKeys.right?.isDown;
@@ -342,11 +275,12 @@ export class LunaScene extends Phaser.Scene {
 
   private handleFoeHit(foe: Phaser.Physics.Arcade.Sprite) {
     const kind = foe.getData("kind") as FoeSpawn["kind"];
-    const isStomp = this.luna.body && this.luna.body.velocity.y > 0 && this.luna.body.touching.down;
+    const isStomp = !!(this.luna.body && this.luna.body.velocity.y > 0 && this.luna.body.touching.down);
 
     if (isStomp && kind === "cat") {
       this.foeGroup.remove(foe, true, true);
-      this.setStatus("Luna booped a cat away!");
+      this.runController.setStatus("Luna booped a cat away!");
+      this.scheduleStatusClear();
       this.luna.setVelocityY(-GAME_CONFIG.jumpVelocity * 0.6);
       return;
     }
@@ -356,76 +290,48 @@ export class LunaScene extends Phaser.Scene {
     }
 
     const now = this.time.now;
-    const nextHealth = damage(this.healthState, 1, now);
-    if (nextHealth !== this.healthState) {
-      this.healthState = nextHealth;
-      this.updateHud();
-
-      if (isGameOver(this.healthState)) {
-        this.endGame("Oh no! Luna needs a rest.");
-        return;
+    const result = this.runController.onFoeHit(isStomp, kind, now);
+    if (result.message) {
+      this.runController.setStatus(result.message);
+      if (!result.gameOver) {
+        this.scheduleStatusClear();
       }
-
-      this.setStatus("Ouch! Luna lost a heart.");
-    } else if (isStomp && kind === "roomba") {
-      this.setStatus("Roombas are sturdy!");
     }
-
-    if (foe.body) {
-      foe.setVelocityX(foe.body.velocity.x * -1);
+    if (result.gameOver) {
+      this.luna.setVelocity(0, 0);
+    } else if (result.damaged) {
+      // Bounce the foe back
+      if (foe.body) {
+        foe.setVelocityX(foe.body.velocity.x * -1);
+      }
     }
   }
 
   private handleItemPickup(item: Phaser.Physics.Arcade.Sprite) {
     const kind = item.getData("kind") as ItemSpawn["kind"];
     const now = this.time.now;
-    if (kind === "food") {
-      this.healthState = heal(this.healthState, 1);
-      this.setStatus("Yum! Puppy food +1 HP.");
-    } else {
-      this.healthState = applyImmunity(this.healthState, now);
-      this.setStatus("Drumstick power! Luna is glowing.");
-    }
+    const result = this.runController.onItemPickup(kind, now);
+    this.runController.setStatus(result.message);
+    this.scheduleStatusClear();
     item.destroy();
   }
 
   private handlePitCheck() {
     if (this.luna.y > GAME_CONFIG.height + 80) {
-      this.healthState = { ...this.healthState, hp: 0 };
-      this.updateHud();
-      this.endGame("Luna fell into a pit!");
+      this.runController.onPitFall();
+      this.luna.setVelocity(0, 0);
     }
   }
 
-  private endGame(message: string) {
-    this.isGameEnded = true;
-    this.luna.setVelocity(0, 0);
-    this.setStatus(message, true);
-  }
-
-  private updateHud() {
-    const hearts = "❤".repeat(this.healthState.hp).padEnd(GAME_CONFIG.maxHp, "♡");
-    this.ui.hpElement.textContent = `HP: ${hearts}`;
-    this.ui.statusElement.textContent = this.statusText || "Run to your human!";
-  }
-
-  private setStatus(message: string, sticky = false) {
-    this.statusText = message;
-    this.updateHud();
-    if (sticky) {
-      return;
-    }
+  private scheduleStatusClear() {
     this.statusTimer?.destroy();
     this.statusTimer = this.time.delayedCall(2000, () => {
-      this.statusText = "";
-      this.updateHud();
+      this.runController.clearStatus();
     });
   }
 
   private updateProgressBar() {
-    const startX = 120;
-    const endX = GAME_CONFIG.levelLength - 80;
-    const progress = Math.min(1, Math.max(0, (this.luna.x - startX) / (endX - startX)));
+    const { progress } = this.runController.getProgress(this.luna.x);
     const barWidth = 200;
     const barHeight = 12;
     const barX = GAME_CONFIG.width / 2 - barWidth / 2;
@@ -457,20 +363,14 @@ export class LunaScene extends Phaser.Scene {
   }
 
   private checkWinCondition() {
-    if (this.hasWon) {
-      return;
-    }
-    const distance = Phaser.Math.Distance.Between(
+    const result = this.runController.checkWin(
       this.luna.x,
       this.luna.y,
-      this.ownerSprite.x,
-      this.ownerSprite.y
+      this.plan.ownerX,
+      this.plan.ownerY
     );
-    if (distance < 50) {
-      this.hasWon = true;
-      this.isGameEnded = true;
+    if (result.won) {
       this.luna.setVelocity(0, 0);
-      this.setStatus("Luna found her human! 💖 You win!", true);
     }
   }
 

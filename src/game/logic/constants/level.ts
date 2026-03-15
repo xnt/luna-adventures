@@ -1,25 +1,17 @@
-export const GAME_CONFIG = {
-  width: 960,
-  height: 540,
+/**
+ * Level constants - level geometry, chunk generation, and terrain settings
+ */
+export const level = {
   groundY: 470,
   tileSize: 32,
-  maxHp: 3,
-  runSpeed: 260,
-  dashSpeed: 340,
-  jumpVelocity: 520,
-  catSpeed: 80,
-  roombaSpeed: 50,
   chunkWidth: 12,
   minPlatformLength: 3,
   maxPlatformLength: 6,
   pitChance: 0.2,
   stairChance: 0.25,
-  itemChance: 0.18,
-  foeChance: 0.22,
-  buffDurationMs: 5000,
   chunkBuffer: 6,
   levelChunks: 40,
   get levelLength() {
     return this.levelChunks * this.chunkWidth * this.tileSize;
   },
-};
+} as const;

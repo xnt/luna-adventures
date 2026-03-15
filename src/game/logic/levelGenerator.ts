@@ -37,7 +37,7 @@ export class LevelGenerator {
         continue;
       }
 
-      let height = GAME_CONFIG.groundY;
+      let height: number = GAME_CONFIG.groundY;
       let kind: PlatformSegment["kind"] = "ground";
 
       if (this.rng() < GAME_CONFIG.stairChance) {

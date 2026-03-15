@@ -11,6 +11,20 @@ export default defineConfig({
   test: {
     environment: "jsdom",
     globals: true,
-    include: ["src/game/logic/__tests__/**/*.test.ts"],
+    include: [
+      "src/game/logic/__tests__/**/*.test.ts",
+      "src/game/themes/__tests__/**/*.test.ts",
+    ],
+    coverage: {
+      provider: "istanbul",
+      reporter: ["text", "html"],
+      reportsDirectory: "./coverage",
+      all: true,
+      include: ["src/**/*.ts"],
+      exclude: [
+        "src/**/*.test.ts",
+        "src/**/__tests__/**",
+      ],
+    },
   },
 });
