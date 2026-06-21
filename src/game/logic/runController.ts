@@ -5,6 +5,7 @@ import {
   damage,
   heal,
   isGameOver,
+  isStarPowerActive,
   type HealthState,
 } from "./health";
 import type { FoeSpawn, ItemSpawn } from "./types";
@@ -29,6 +30,8 @@ export interface RunState {
 
 export interface FoeHitResult {
   damaged: boolean;
+  /** True when drumstick/star power defeats the foe on contact */
+  defeated: boolean;
   gameOver: boolean;
   message: string;
 }
@@ -105,14 +108,31 @@ export class RunController {
     };
   }
 
-  /** Handle foe collision. Returns whether damage occurred and if game ended */
+  /** Handle foe collision. Returns whether damage occurred, foe defeated, and if game ended */
   onFoeHit(
     isStomp: boolean,
     kind: FoeSpawn["kind"],
     now: number
   ): FoeHitResult {
+    // Drumstick / star power: any contact defeats the foe (Mario star style).
+    // Brief post-hit i-frames alone do NOT count — only the drumstick buff.
+    if (isStarPowerActive(this.healthState, now)) {
+      const foeLabel = kind === "roomba" ? "roomba" : "cat";
+      return {
+        damaged: false,
+        defeated: true,
+        gameOver: false,
+        message: `Star power! Luna blasted a ${foeLabel}!`,
+      };
+    }
+
     if (isStomp && kind === "cat") {
-      return { damaged: false, gameOver: false, message: "Luna booped a cat away!" };
+      return {
+        damaged: false,
+        defeated: true,
+        gameOver: false,
+        message: "Luna booped a cat away!",
+      };
     }
 
     const nextHealth = damage(this.healthState, 1, now);
@@ -121,14 +141,24 @@ export class RunController {
       if (isGameOver(this.healthState)) {
         return this.endGame("Oh no! Luna needs a rest.");
       }
-      return { damaged: true, gameOver: false, message: "Ouch! Luna lost a heart." };
+      return {
+        damaged: true,
+        defeated: false,
+        gameOver: false,
+        message: "Ouch! Luna lost a heart.",
+      };
     }
 
     if (isStomp && kind === "roomba") {
-      return { damaged: false, gameOver: false, message: "Roombas are sturdy!" };
+      return {
+        damaged: false,
+        defeated: false,
+        gameOver: false,
+        message: "Roombas are sturdy!",
+      };
     }
 
-    return { damaged: false, gameOver: false, message: "" };
+    return { damaged: false, defeated: false, gameOver: false, message: "" };
   }
 
   /** Handle item pickup. Returns status message */
@@ -199,7 +229,7 @@ export class RunController {
     this.hasWon = false;
     this.setStatus(message, true);
     this.showEndScreen("lose", message);
-    return { damaged: true, gameOver: true, message };
+    return { damaged: true, defeated: false, gameOver: true, message };
   }
 
   private showEndScreen(outcome: "win" | "lose", message: string) {

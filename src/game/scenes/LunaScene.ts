@@ -1,6 +1,11 @@
 import Phaser from "phaser";
 import { GAME_CONFIG } from "../logic/constants";
 import {
+  isStarPowerActive,
+  isStarPowerExpiring,
+  starPowerRemainingMs,
+} from "../logic/health";
+import {
   buildLevelGeometry,
   generateLevelPlan,
   spawnLevelEntities,
@@ -21,6 +26,19 @@ import {
 interface SceneUiRefs extends RunSceneUiRefs {
   controlButtons: HTMLDivElement[];
 }
+
+/** Mario-star style rainbow cycle for drumstick power */
+const STAR_POWER_COLORS = [
+  0xfff4b1, // warm gold
+  0xff9ecd, // pink
+  0x9ecbff, // sky blue
+  0xb8ff9e, // lime
+  0xffc48a, // peach
+  0xd4a8ff, // lavender
+] as const;
+
+/** Last N ms of buff: blink faster so the player knows it's about to end */
+const STAR_POWER_WARNING_MS = 1500;
 
 export class LunaScene extends Phaser.Scene {
   private luna!: Phaser.Physics.Arcade.Sprite;
@@ -43,6 +61,10 @@ export class LunaScene extends Phaser.Scene {
   private controlsState = { left: false, right: false, jump: false, dash: false };
   private progressBar!: Phaser.GameObjects.Graphics;
   private currentTheme!: Theme;
+  /** Halo / aura drawn behind Luna while star power is active */
+  private starPowerGlow!: Phaser.GameObjects.Graphics;
+  /** Sparkle particles orbiting Luna during star power */
+  private starPowerEmitter?: Phaser.GameObjects.Particles.ParticleEmitter;
 
   constructor(private ui: SceneUiRefs) {
     super("luna");
@@ -103,6 +125,12 @@ export class LunaScene extends Phaser.Scene {
     this.luna.setOffset(3, 2);
     this.luna.setDepth(2);
 
+    // Glow halo sits behind Luna; particles are created on first drumstick pickup
+    this.starPowerGlow = this.add.graphics();
+    this.starPowerGlow.setDepth(1);
+    this.starPowerGlow.setVisible(false);
+    this.ensureStarPowerParticles();
+
     this.cursors = this.input.keyboard!.createCursorKeys();
     this.registerKeyboard();
     this.registerMobileControls();
@@ -124,6 +152,37 @@ export class LunaScene extends Phaser.Scene {
     this.statusTimer = this.time.delayedCall(2000, () => {
       this.runController.clearStatus();
     });
+  }
+
+  /** Build a small sparkle texture once and attach an emitter following Luna. */
+  private ensureStarPowerParticles() {
+    if (!this.textures.exists("star-sparkle")) {
+      const g = this.add.graphics();
+      g.fillStyle(0xffffff, 1);
+      g.fillCircle(4, 4, 4);
+      g.fillStyle(0xfff4b1, 1);
+      g.fillCircle(4, 4, 2);
+      g.generateTexture("star-sparkle", 8, 8);
+      g.destroy();
+    }
+
+    if (!this.starPowerEmitter) {
+      this.starPowerEmitter = this.add.particles(0, 0, "star-sparkle", {
+        follow: this.luna,
+        followOffset: { x: 0, y: -4 },
+        speed: { min: 20, max: 70 },
+        angle: { min: 0, max: 360 },
+        scale: { start: 0.9, end: 0 },
+        alpha: { start: 0.95, end: 0 },
+        lifespan: { min: 280, max: 520 },
+        frequency: 55,
+        quantity: 1,
+        blendMode: "ADD",
+        tint: [...STAR_POWER_COLORS],
+      });
+      this.starPowerEmitter.setDepth(3);
+      this.starPowerEmitter.stop();
+    }
   }
 
   private createLunaSprite() {
@@ -208,12 +267,63 @@ export class LunaScene extends Phaser.Scene {
     this.updateEnemies();
     this.updateProgressBar();
     this.checkWinCondition();
+    this.updateStarPowerVisuals(time);
+  }
 
+  /**
+   * Rainbow tint + glow halo while drumstick star power is active.
+   * In the last STAR_POWER_WARNING_MS, Luna blinks rapidly so the player
+   * can tell the buff is about to expire (Mario star "hurry" feel).
+   */
+  private updateStarPowerVisuals(time: number) {
     const health = this.runController.getHealth();
-    if (health.immuneUntil > time) {
-      this.luna.setTint(0xfff4b1);
-    } else {
+    const active = isStarPowerActive(health, time);
+
+    if (!active) {
       this.luna.clearTint();
+      this.luna.setAlpha(1);
+      this.starPowerGlow.clear();
+      this.starPowerGlow.setVisible(false);
+      this.starPowerEmitter?.stop();
+      return;
+    }
+
+    const remaining = starPowerRemainingMs(health, time);
+    const warning = isStarPowerExpiring(health, time, STAR_POWER_WARNING_MS);
+    // Faster color cycle near the end; normal pace otherwise
+    const cycleMs = warning ? 90 : 160;
+    const colorIndex = Math.floor(time / cycleMs) % STAR_POWER_COLORS.length;
+    const color = STAR_POWER_COLORS[colorIndex];
+
+    // Blink (alpha pulse) only in the warning window
+    if (warning) {
+      const blinkOn = Math.floor(time / 100) % 2 === 0;
+      this.luna.setAlpha(blinkOn ? 1 : 0.35);
+    } else {
+      this.luna.setAlpha(1);
+    }
+
+    this.luna.setTint(color);
+
+    // Pulsing halo behind Luna (intensity ramps up slightly as time runs low)
+    const urgency = warning ? 1 + (1 - remaining / STAR_POWER_WARNING_MS) * 0.35 : 1;
+    const pulse = (0.55 + 0.35 * Math.sin(time / (warning ? 80 : 140))) * urgency;
+    const radius = 22 + (warning ? 4 : 0) + 3 * Math.sin(time / 110);
+    this.starPowerGlow.setVisible(true);
+    this.starPowerGlow.clear();
+    this.starPowerGlow.fillStyle(color, 0.22 * pulse);
+    this.starPowerGlow.fillCircle(this.luna.x, this.luna.y, radius + 10);
+    this.starPowerGlow.fillStyle(color, 0.38 * pulse);
+    this.starPowerGlow.fillCircle(this.luna.x, this.luna.y, radius);
+    this.starPowerGlow.lineStyle(2, 0xffffff, 0.45 * pulse);
+    this.starPowerGlow.strokeCircle(this.luna.x, this.luna.y, radius + 2);
+
+    // Keep particles running; ramp emission slightly in warning phase
+    if (this.starPowerEmitter) {
+      if (!this.starPowerEmitter.emitting) {
+        this.starPowerEmitter.start();
+      }
+      this.starPowerEmitter.setFrequency(warning ? 30 : 55);
     }
   }
 
@@ -281,14 +391,22 @@ export class LunaScene extends Phaser.Scene {
   }
 
   private handleFoeHit(foe: Phaser.Physics.Arcade.Sprite) {
+    // Already removed this frame (overlap can fire multiple times before destroy settles)
+    if (!foe.active) {
+      return;
+    }
+
     const kind = foe.getData("kind") as FoeSpawn["kind"];
     const isStomp = !!(this.luna.body && this.luna.body.velocity.y > 0 && this.luna.body.touching.down);
+    const now = this.time.now;
+    const result = this.runController.onFoeHit(isStomp, kind, now);
 
-    if (isStomp && kind === "cat") {
-      this.foeGroup.remove(foe, true, true);
-      this.runController.setStatus("Luna booped a cat away!");
-      this.scheduleStatusClear();
-      this.luna.setVelocityY(-GAME_CONFIG.jumpVelocity * 0.6);
+    if (result.defeated) {
+      this.defeatFoe(foe, isStomp);
+      if (result.message) {
+        this.runController.setStatus(result.message);
+        this.scheduleStatusClear();
+      }
       return;
     }
 
@@ -296,8 +414,6 @@ export class LunaScene extends Phaser.Scene {
       this.luna.setVelocityY(-GAME_CONFIG.jumpVelocity * 0.3);
     }
 
-    const now = this.time.now;
-    const result = this.runController.onFoeHit(isStomp, kind, now);
     if (result.message) {
       this.runController.setStatus(result.message);
       if (!result.gameOver) {
@@ -314,6 +430,17 @@ export class LunaScene extends Phaser.Scene {
     }
   }
 
+  /** Remove a foe with a small hop for Luna; used for stomps and star-power contact. */
+  private defeatFoe(foe: Phaser.Physics.Arcade.Sprite, isStomp: boolean) {
+    this.foeGroup.remove(foe, true, true);
+    if (isStomp) {
+      this.luna.setVelocityY(-GAME_CONFIG.jumpVelocity * 0.6);
+    } else {
+      // Light bounce even on side-contact while star-powered
+      this.luna.setVelocityY(-GAME_CONFIG.jumpVelocity * 0.25);
+    }
+  }
+
   private handleItemPickup(item: Phaser.Physics.Arcade.Sprite) {
     const kind = item.getData("kind") as ItemSpawn["kind"];
     const now = this.time.now;
@@ -321,6 +448,12 @@ export class LunaScene extends Phaser.Scene {
     this.runController.setStatus(result.message);
     this.scheduleStatusClear();
     item.destroy();
+
+    // Kick off star-power visuals immediately on drumstick pickup
+    if (kind === "drumstick") {
+      this.ensureStarPowerParticles();
+      this.updateStarPowerVisuals(now);
+    }
   }
 
   private handlePitCheck() {
@@ -344,6 +477,11 @@ export class LunaScene extends Phaser.Scene {
     this.cancelStatusClear();
     this.luna.setVelocity(0, 0);
     this.luna.setAcceleration(0, 0);
+    this.luna.clearTint();
+    this.luna.setAlpha(1);
+    this.starPowerGlow?.clear();
+    this.starPowerGlow?.setVisible(false);
+    this.starPowerEmitter?.stop();
     const body = this.luna.body;
     if (body && body instanceof Phaser.Physics.Arcade.Body) {
       body.setAllowGravity(false);

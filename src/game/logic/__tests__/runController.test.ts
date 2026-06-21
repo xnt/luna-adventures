@@ -43,6 +43,7 @@ describe("RunController", () => {
     ctrl.start();
     const result = ctrl.onFoeHit(false, "cat", 1000);
     expect(result.damaged).toBe(true);
+    expect(result.defeated).toBe(false);
     expect(result.gameOver).toBe(false);
     expect(ctrl.getHealth().hp).toBe(GAME_CONFIG.maxHp - 1);
   });
@@ -53,8 +54,49 @@ describe("RunController", () => {
     ctrl.start();
     const result = ctrl.onFoeHit(true, "cat", 1000);
     expect(result.damaged).toBe(false);
+    expect(result.defeated).toBe(true);
     expect(ctrl.getHealth().hp).toBe(GAME_CONFIG.maxHp);
     expect(result.message).toContain("booped");
+  });
+
+  it("onFoeHit with drumstick immunity defeats any foe without damage", () => {
+    const ui = makeMockUi();
+    const ctrl = new RunController({ ui });
+    ctrl.start();
+    ctrl.onItemPickup("drumstick", 1000);
+
+    const catHit = ctrl.onFoeHit(false, "cat", 1500);
+    expect(catHit.damaged).toBe(false);
+    expect(catHit.defeated).toBe(true);
+    expect(catHit.message).toContain("Star power");
+    expect(ctrl.getHealth().hp).toBe(GAME_CONFIG.maxHp);
+
+    const roombaHit = ctrl.onFoeHit(false, "roomba", 1600);
+    expect(roombaHit.damaged).toBe(false);
+    expect(roombaHit.defeated).toBe(true);
+    expect(roombaHit.message).toContain("roomba");
+    expect(ctrl.getHealth().hp).toBe(GAME_CONFIG.maxHp);
+  });
+
+  it("onFoeHit roomba stomp without immunity damages but does not defeat", () => {
+    const ui = makeMockUi();
+    const ctrl = new RunController({ ui });
+    ctrl.start();
+    const result = ctrl.onFoeHit(true, "roomba", 1000);
+    expect(result.defeated).toBe(false);
+    expect(result.damaged).toBe(true);
+    expect(ctrl.getHealth().hp).toBe(GAME_CONFIG.maxHp - 1);
+  });
+
+  it("onFoeHit roomba during post-hit i-frames shows sturdy message", () => {
+    const ui = makeMockUi();
+    const ctrl = new RunController({ ui });
+    ctrl.start();
+    ctrl.onFoeHit(false, "cat", 1000); // take damage, gain brief i-frames
+    const result = ctrl.onFoeHit(true, "roomba", 1100); // still within 600ms i-frames
+    expect(result.defeated).toBe(false);
+    expect(result.damaged).toBe(false);
+    expect(result.message).toContain("sturdy");
   });
 
   it("onFoeHit triggers game over at 0 hp", () => {
