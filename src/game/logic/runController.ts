@@ -8,10 +8,16 @@ import {
   type HealthState,
 } from "./health";
 import type { FoeSpawn, ItemSpawn } from "./types";
+import type { Theme } from "../themes/types";
+import { applyThemeUiVars } from "../themes/themeUi";
 
 export interface SceneUiRefs {
   hpElement: HTMLDivElement;
   statusElement: HTMLDivElement;
+  endScreen: HTMLDivElement;
+  endScreenKicker: HTMLParagraphElement;
+  endScreenTitle: HTMLHeadingElement;
+  endScreenMessage: HTMLParagraphElement;
 }
 
 export interface RunState {
@@ -57,9 +63,16 @@ export class RunController {
   private hasWon = false;
   private statusText = "";
   private ui: SceneUiRefs;
+  private theme: Theme | null = null;
 
   constructor(options: RunControllerOptions) {
     this.ui = options.ui;
+  }
+
+  /** Bind the run's theme so the end-screen modal matches the selected scene. */
+  setTheme(theme: Theme) {
+    this.theme = theme;
+    applyThemeUiVars(this.ui.endScreen, theme);
   }
 
   /** Reset all run state for a fresh start */
@@ -68,6 +81,7 @@ export class RunController {
     this.isEnded = false;
     this.hasWon = false;
     this.statusText = "";
+    this.hideEndScreen();
     this.updateHud();
   }
 
@@ -136,15 +150,17 @@ export class RunController {
 
   /** Check if Luna reached her human */
   checkWin(lunaX: number, lunaY: number, ownerX: number, ownerY: number): WinCheckResult {
-    if (this.hasWon) {
+    if (this.hasWon || this.isEnded) {
       return { won: false };
     }
     const distance = Math.hypot(lunaX - ownerX, lunaY - ownerY);
     if (distance < 50) {
       this.hasWon = true;
       this.isEnded = true;
-      this.setStatus("Luna found her human! 💖 You win!", true);
-      return { won: true, message: "Luna found her human! 💖 You win!" };
+      const message = "Luna found her human! 💖 You win!";
+      this.setStatus(message, true);
+      this.showEndScreen("win", message);
+      return { won: true, message };
     }
     return { won: false };
   }
@@ -180,7 +196,32 @@ export class RunController {
   /** Force end game with message */
   private endGame(message: string): FoeHitResult & PitFallResult {
     this.isEnded = true;
+    this.hasWon = false;
     this.setStatus(message, true);
+    this.showEndScreen("lose", message);
     return { damaged: true, gameOver: true, message };
+  }
+
+  private showEndScreen(outcome: "win" | "lose", message: string) {
+    const isWin = outcome === "win";
+    if (this.theme) {
+      applyThemeUiVars(this.ui.endScreen, this.theme);
+    }
+    this.ui.endScreen.classList.toggle("end-screen--win", isWin);
+    this.ui.endScreen.classList.toggle("end-screen--lose", !isWin);
+    const themeLabel = this.theme?.name ?? "Luna Adventures";
+    this.ui.endScreenKicker.textContent = isWin
+      ? `${themeLabel} · Success`
+      : `${themeLabel} · Game over`;
+    this.ui.endScreenTitle.textContent = isWin ? "You win!" : "Game over";
+    this.ui.endScreenMessage.textContent = message;
+    this.ui.endScreen.hidden = false;
+    this.ui.endScreen.setAttribute("aria-hidden", "false");
+  }
+
+  private hideEndScreen() {
+    this.ui.endScreen.hidden = true;
+    this.ui.endScreen.setAttribute("aria-hidden", "true");
+    this.ui.endScreen.classList.remove("end-screen--win", "end-screen--lose");
   }
 }

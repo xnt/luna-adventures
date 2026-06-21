@@ -4,7 +4,19 @@ import { GAME_CONFIG } from "../constants";
 function makeMockUi(): SceneUiRefs {
   const hpElement = document.createElement("div");
   const statusElement = document.createElement("div");
-  return { hpElement, statusElement };
+  const endScreen = document.createElement("div");
+  endScreen.hidden = true;
+  const endScreenKicker = document.createElement("p");
+  const endScreenTitle = document.createElement("h2");
+  const endScreenMessage = document.createElement("p");
+  return {
+    hpElement,
+    statusElement,
+    endScreen,
+    endScreenKicker,
+    endScreenTitle,
+    endScreenMessage,
+  };
 }
 
 describe("RunController", () => {
@@ -84,6 +96,46 @@ describe("RunController", () => {
     expect(result.gameOver).toBe(true);
     expect(ctrl.getState().isEnded).toBe(true);
     expect(ctrl.getHealth().hp).toBe(0);
+    expect(ui.endScreen.hidden).toBe(false);
+    expect(ui.endScreenTitle.textContent).toBe("Game over");
+    expect(ui.endScreenKicker.textContent).toContain("Game over");
+    expect(ui.endScreenMessage.textContent).toContain("pit");
+  });
+
+  it("setTheme styles the end screen for the active scene", () => {
+    const ui = makeMockUi();
+    const ctrl = new RunController({ ui });
+    ctrl.start();
+    ctrl.setTheme({
+      id: "matrix",
+      name: "The Matrix",
+      colors: {
+        background: 0x0a0a0a,
+        sky: 0x000000,
+        platform: 0x0d4d0d,
+        platformAccent: 0x00ff00,
+        cat: 0x1a1a1a,
+        catAccent: 0x00ff00,
+        roomba: 0x1a1a1a,
+        roombaAccent: 0x00ff00,
+        food: 0x00aa00,
+        foodAccent: 0x00ff00,
+        drumstick: 0x00dd00,
+        drumstickAccent: 0x00ff00,
+      },
+      backgroundElements: [],
+      groundStyle: "tech",
+      generateBackground: () => undefined,
+      generateGround: () => undefined,
+      generateCat: () => undefined,
+      generateRoomba: () => undefined,
+      generateFood: () => undefined,
+      generateDrumstick: () => undefined,
+    });
+    ctrl.onPitFall();
+    expect(ui.endScreen.dataset.themeId).toBe("matrix");
+    expect(ui.endScreenKicker.textContent).toContain("The Matrix");
+    expect(ui.endScreen.style.getPropertyValue("--theme-accent")).toBeTruthy();
   });
 
   it("checkWin triggers win when close enough", () => {
@@ -92,6 +144,8 @@ describe("RunController", () => {
     ctrl.start();
     const result = ctrl.checkWin(100, 100, 120, 120);
     expect(result.won).toBe(true);
+    expect(ui.endScreen.hidden).toBe(false);
+    expect(ui.endScreenTitle.textContent).toBe("You win!");
     expect(ctrl.getState().hasWon).toBe(true);
     expect(ctrl.canMove()).toBe(false);
   });

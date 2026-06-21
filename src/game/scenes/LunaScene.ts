@@ -48,6 +48,7 @@ export class LunaScene extends Phaser.Scene {
     super("luna");
     // Controller owns run-state; scene passes UI refs it needs
     this.runController = new RunController({ ui: this.ui });
+    this.runController.start();
   }
 
   preload() {
@@ -57,6 +58,7 @@ export class LunaScene extends Phaser.Scene {
   create() {
     // Resolve and apply theme using the theme service
     this.currentTheme = resolveTheme(themeRegistry, Date.now() % 10000);
+    this.runController.setTheme(this.currentTheme);
 
     this.physics.world.setBounds(0, 0, Number.MAX_SAFE_INTEGER, GAME_CONFIG.height + 200);
     this.cameras.main.setBounds(0, 0, Number.MAX_SAFE_INTEGER, GAME_CONFIG.height);
@@ -192,13 +194,18 @@ export class LunaScene extends Phaser.Scene {
   }
 
   update(time: number) {
+    // Pit check runs even when ended is false only; once ended we freeze early.
+    // Check before the canMove guard so a fall that begins mid-frame still resolves.
+    if (!this.runController.getState().isEnded) {
+      this.handlePitCheck();
+    }
+
     if (!this.runController.canMove()) {
       return;
     }
 
     this.updateMovement();
     this.updateEnemies();
-    this.handlePitCheck();
     this.updateProgressBar();
     this.checkWinCondition();
 
@@ -298,7 +305,7 @@ export class LunaScene extends Phaser.Scene {
       }
     }
     if (result.gameOver) {
-      this.luna.setVelocity(0, 0);
+      this.freezeLuna();
     } else if (result.damaged) {
       // Bounce the foe back
       if (foe.body) {
@@ -317,14 +324,40 @@ export class LunaScene extends Phaser.Scene {
   }
 
   private handlePitCheck() {
-    if (this.luna.y > GAME_CONFIG.height + 80) {
+    if (this.runController.getState().isEnded) {
+      return;
+    }
+
+    // Trigger once Luna is clearly below normal terrain (groundY is the platform top).
+    // Using groundY + tileSize is more reliable than height+80: world/camera bounds
+    // sit near the screen edge and can make the old threshold feel like a no-op.
+    const pitThreshold = GAME_CONFIG.groundY + GAME_CONFIG.tileSize;
+    const lunaY = this.luna.body ? this.luna.body.bottom : this.luna.y;
+    if (lunaY > pitThreshold) {
       this.runController.onPitFall();
-      this.luna.setVelocity(0, 0);
+      this.freezeLuna();
     }
   }
 
-  private scheduleStatusClear() {
+  /** Stop Luna and cancel transient status timers so game-over messages stick. */
+  private freezeLuna() {
+    this.cancelStatusClear();
+    this.luna.setVelocity(0, 0);
+    this.luna.setAcceleration(0, 0);
+    const body = this.luna.body;
+    if (body && body instanceof Phaser.Physics.Arcade.Body) {
+      body.setAllowGravity(false);
+      body.enable = false;
+    }
+  }
+
+  private cancelStatusClear() {
     this.statusTimer?.destroy();
+    this.statusTimer = undefined;
+  }
+
+  private scheduleStatusClear() {
+    this.cancelStatusClear();
     this.statusTimer = this.time.delayedCall(2000, () => {
       this.runController.clearStatus();
     });
@@ -370,7 +403,7 @@ export class LunaScene extends Phaser.Scene {
       this.plan.ownerY
     );
     if (result.won) {
-      this.luna.setVelocity(0, 0);
+      this.freezeLuna();
     }
   }
 

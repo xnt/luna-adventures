@@ -14,6 +14,19 @@ const overlay = document.createElement("div");
 overlay.id = "game-overlay";
 overlay.innerHTML = "<div id=\"hp\">HP: ❤❤❤</div><div id=\"status\">Run to your human!</div>";
 
+const endScreen = document.createElement("div");
+endScreen.id = "end-screen";
+endScreen.hidden = true;
+endScreen.setAttribute("aria-hidden", "true");
+endScreen.innerHTML = `
+  <div class="end-screen-card" role="dialog" aria-modal="true" aria-labelledby="end-screen-title">
+    <p id="end-screen-kicker" class="end-screen-kicker"></p>
+    <h2 id="end-screen-title" class="end-screen-title"></h2>
+    <p id="end-screen-message" class="end-screen-message"></p>
+    <button type="button" id="end-screen-restart" class="end-screen-button">Play again</button>
+  </div>
+`;
+
 const instructions = document.createElement("div");
 instructions.id = "instructions";
 instructions.textContent =
@@ -30,11 +43,20 @@ controls.innerHTML = `
   <div class="control-button" data-action="" aria-hidden="true"></div>
 `;
 
-container.append(overlay, instructions, controls);
+container.append(overlay, endScreen, instructions, controls);
 app.appendChild(container);
+
+const restartButton = endScreen.querySelector("#end-screen-restart") as HTMLButtonElement;
+restartButton.addEventListener("click", () => {
+  window.location.reload();
+});
 
 createGame(container, {
   hpElement: overlay.querySelector("#hp") as HTMLDivElement,
   statusElement: overlay.querySelector("#status") as HTMLDivElement,
+  endScreen,
+  endScreenKicker: endScreen.querySelector("#end-screen-kicker") as HTMLParagraphElement,
+  endScreenTitle: endScreen.querySelector("#end-screen-title") as HTMLHeadingElement,
+  endScreenMessage: endScreen.querySelector("#end-screen-message") as HTMLParagraphElement,
   controlButtons: Array.from(controls.querySelectorAll<HTMLDivElement>(".control-button")),
 });

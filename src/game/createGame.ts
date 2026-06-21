@@ -4,6 +4,10 @@ import { LunaScene } from "./scenes/LunaScene";
 interface GameUiRefs {
   hpElement: HTMLDivElement;
   statusElement: HTMLDivElement;
+  endScreen: HTMLDivElement;
+  endScreenKicker: HTMLParagraphElement;
+  endScreenTitle: HTMLHeadingElement;
+  endScreenMessage: HTMLParagraphElement;
   controlButtons: HTMLDivElement[];
 }
 

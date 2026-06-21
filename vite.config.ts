@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   base: "/luna-adventures/",
@@ -19,7 +19,6 @@ export default defineConfig({
       provider: "istanbul",
       reporter: ["text", "html"],
       reportsDirectory: "./coverage",
-      all: true,
       include: ["src/**/*.ts"],
       exclude: [
         "src/**/*.test.ts",
